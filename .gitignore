@@ -1,0 +1,14 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database and local logs
+*.db
+*.sqlite3
+*.log
+
+# Build & scratch artifacts
+build/
+dist/
+*.tmp
