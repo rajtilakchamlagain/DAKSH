@@ -1,9 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'neural_voice_bridge.dart';
 
 /// Multi-lingual baritone voice output engine
 /// Configured with Paul Bettany / JARVIS acoustic parameters:
-/// Pitch lowered (~0.82), speech rate deliberate (~0.46), deep resonance.
+/// Integrates NeuralVoiceBridge for human-grade audio clarity.
 class VoiceOutputController {
   final FlutterTts _flutterTts = FlutterTts();
   bool _isPlaying = false;
@@ -12,8 +13,8 @@ class VoiceOutputController {
 
   Future<void> initialize() async {
     try {
-      await _flutterTts.setPitch(0.82); // Lower pitch for deep baritone tone
-      await _flutterTts.setSpeechRate(0.46); // Deliberate, tactical speech pace
+      await _flutterTts.setPitch(0.82);
+      await _flutterTts.setSpeechRate(0.46);
       await _flutterTts.setVolume(1.0);
 
       _flutterTts.setStartHandler(() {
@@ -36,6 +37,20 @@ class VoiceOutputController {
   /// Automatically adapts accent/locale to language matching input context
   Future<void> speak(String text, {String? languageCode}) async {
     try {
+      final lower = text.toLowerCase();
+      if (lower.contains('briefing') || lower.contains('sentinel notifications')) {
+        await NeuralVoiceBridge.playBaritoneCue('briefing');
+        return;
+      }
+      if (lower.contains('consecutive gym skips') || lower.contains('stand down, sir')) {
+        await NeuralVoiceBridge.playBaritoneCue('pushback');
+        return;
+      }
+      if (lower.contains('standing by') || lower.contains('systems online')) {
+        await NeuralVoiceBridge.playBaritoneCue('wake');
+        return;
+      }
+
       String targetLang = 'en-US';
       if (languageCode != null) {
         if (languageCode.startsWith('hi')) {
@@ -56,6 +71,7 @@ class VoiceOutputController {
 
   Future<void> stop() async {
     try {
+      await NeuralVoiceBridge.stop();
       await _flutterTts.stop();
       _isPlaying = false;
     } catch (e) {
@@ -63,3 +79,4 @@ class VoiceOutputController {
     }
   }
 }
+
