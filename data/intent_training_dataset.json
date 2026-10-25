@@ -1,0 +1,18 @@
+[
+  {"text": "What did I miss? Give me a brief.", "intent": "BRIEFING", "entities": {}},
+  {"text": "Brief me on today's tasks and notifications", "intent": "BRIEFING", "entities": {}},
+  {"text": "आज के के भयो? मलाई ब्रिफिङ दिनुहोस्", "intent": "BRIEFING", "entities": {}},
+  {"text": "Kya kya miss hua aaj?", "intent": "BRIEFING", "entities": {}},
+  {"text": "I will skip gym workout today", "intent": "SKIP_HABIT", "entities": {"habit": "gym"}},
+  {"text": "Not going to gym tonight", "intent": "SKIP_HABIT", "entities": {"habit": "gym"}},
+  {"text": "आज जिम जान्न", "intent": "SKIP_HABIT", "entities": {"habit": "gym"}},
+  {"text": "Aaj gym nahi jaunga", "intent": "SKIP_HABIT", "entities": {"habit": "gym"}},
+  {"text": "I owe Ram 500 rupees for books", "intent": "ADD_DEBT", "entities": {"type": "FINANCIAL", "amount": 500, "counterparty": "Ram"}},
+  {"text": "Log debt: Shyam gave me 1200", "intent": "ADD_DEBT", "entities": {"type": "FINANCIAL", "amount": 1200, "counterparty": "Shyam"}},
+  {"text": "Remind me to call Mom this Sunday", "intent": "ADD_DEBT", "entities": {"type": "EMOTIONAL", "counterparty": "Mom"}},
+  {"text": "मलाई आमालाई फोन गर्न सम्झाउनुहोस्", "intent": "ADD_DEBT", "entities": {"type": "EMOTIONAL", "counterparty": "Mom"}},
+  {"text": "Rename Priya to Swimi", "intent": "DEVICE_ACTION", "entities": {"action": "rename_contact", "target": "Priya", "replacement": "Swimi"}},
+  {"text": "Go silent now", "intent": "STAND_DOWN", "entities": {}},
+  {"text": "Stand down DAKSH", "intent": "STAND_DOWN", "entities": {}},
+  {"text": "शान्त बस्नुहोस्", "intent": "STAND_DOWN", "entities": {}}
+]
