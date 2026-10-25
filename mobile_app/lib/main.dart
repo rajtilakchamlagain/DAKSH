@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'native_bridge.dart';
 import 'harmonic_bar.dart';
+import 'voice_input.dart';
+import 'voice_output.dart';
+import 'session_state.dart';
+import 'gemini_brain.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -74,8 +78,14 @@ class _DakshDashboardState extends State<DakshDashboard> {
   int _activeLedgerTab = 0; // 0: Cadences, 1: Rollover Debt, 2: Sentinel
   bool _notifPermissionGranted = false;
   bool _isSpeaking = false;
-  bool _isListening = true;
-  String _statusMessage = "ALL SUBSYSTEMS STANDING BY // LISTENING";
+  bool _isListening = false;
+  String _statusMessage = "ALL SUBSYSTEMS STANDING BY // SILENT STEALTH";
+
+  // Phase 7 Controllers & Brain
+  final VoiceInputController _voiceInput = VoiceInputController();
+  final VoiceOutputController _voiceOutput = VoiceOutputController();
+  final SessionStateMachine _sessionState = SessionStateMachine();
+  final GeminiBrain _brain = GeminiBrain();
 
   // Phase 1 Cadence State
   final List<Map<String, dynamic>> _cadences = [
@@ -136,6 +146,13 @@ class _DakshDashboardState extends State<DakshDashboard> {
     super.initState();
     _checkPermissions();
     _listenToSentinel();
+    _voiceOutput.initialize();
+  }
+
+  @override
+  void dispose() {
+    _voiceInput.dispose();
+    super.dispose();
   }
 
   Future<void> _checkPermissions() async {
@@ -156,20 +173,63 @@ class _DakshDashboardState extends State<DakshDashboard> {
     });
   }
 
-  Future<void> _executeVoiceSimulation(String command) async {
+  Future<void> _triggerWakeGreeting() async {
     setState(() {
+      _sessionState.setMode(DakshMode.speaking);
       _isSpeaking = true;
-      _statusMessage = "PROCESSING: '$command'";
+      _statusMessage = "DAKSH: Standing by. Would you like a tactical briefing?";
+    });
+    await _voiceOutput.speak("Standing by. Would you like a tactical briefing?");
+    if (mounted) {
+      setState(() {
+        _isSpeaking = false;
+        _sessionState.setMode(DakshMode.silent);
+      });
+    }
+  }
+
+  Future<void> _handleUserUtterance(String text) async {
+    if (text.isEmpty) return;
+
+    if (_sessionState.isStandDownCommand(text)) {
+      await _voiceInput.stopListening();
+      setState(() {
+        _isListening = false;
+        _sessionState.setMode(DakshMode.silent);
+        _statusMessage = "DAKSH: Standing down. Stealth mode active.";
+      });
+      await _voiceOutput.speak("Standing down.");
+      return;
+    }
+
+    // Check JARVIS habit pushback
+    final pushback = _sessionState.evaluatePushback(text.toLowerCase());
+    if (pushback != null) {
+      setState(() {
+        _isSpeaking = true;
+        _statusMessage = "DAKSH: $pushback";
+      });
+      await _voiceOutput.speak(pushback);
+      if (mounted) setState(() => _isSpeaking = false);
+      return;
+    }
+
+    // Native Bridge Action or Cognitive Brain Query
+    setState(() {
+      _statusMessage = "PROCESSING: '$text'";
+      _sessionState.setMode(DakshMode.processing);
     });
 
-    if (command.contains("Rename Priya")) {
+    if (text.toLowerCase().contains("rename priya")) {
       final res = await DakshNativeBridge.renameContact(currentName: "Priya", newName: "Swimi");
-      setState(() {
-        _statusMessage = res['success'] == true
-            ? "DAKSH: Contact Priya updated to Swimi, sir. Records synchronized."
-            : "DAKSH: Unable to modify contact Priya, sir.";
-      });
-    } else if (command.contains("Push walk")) {
+      final reply = res['success'] == true
+          ? "Contact Priya updated to Swimi. Records synchronized."
+          : "Unable to modify contact Priya.";
+      _deliverResponse(reply);
+      return;
+    }
+
+    if (text.toLowerCase().contains("push walk") || text.toLowerCase().contains("postpone walk")) {
       setState(() {
         _rolloverDebt.insert(0, {
           "id": "TASK_WALK_ROLL",
@@ -179,14 +239,134 @@ class _DakshDashboardState extends State<DakshDashboard> {
           "priority": "HIGH",
           "tag": "#ROLLED_OVER"
         });
-        _statusMessage = "DAKSH: Understood, sir. Shifting the 5,000-step walk to tomorrow at 0700 hours.";
       });
+      _deliverResponse("Daily walk rolled over to tomorrow at 0700 hours.");
+      return;
     }
 
-    await Future.delayed(const Duration(milliseconds: 2400));
+    // Briefing and General Cognitive Synthesis
+    final tacticalContext = {
+      "missedNotifications": _sentinelStream.length,
+      "pendingCadences": _cadences.where((c) => c['isDue'] == true).length,
+      "rolloverDebt": "${_rolloverDebt.length} items logged",
+    };
+
+    final answer = await _brain.query(text, tacticalContext: tacticalContext);
+    await _deliverResponse(answer);
+  }
+
+  Future<void> _deliverResponse(String reply) async {
     setState(() {
-      _isSpeaking = false;
+      _sessionState.setMode(DakshMode.speaking);
+      _isSpeaking = true;
+      _statusMessage = "DAKSH: $reply";
     });
+
+    // Check meeting mode (silence suppression)
+    if (!_sessionState.isMeetingMode) {
+      await _voiceOutput.speak(reply);
+    }
+
+    if (mounted) {
+      setState(() {
+        _isSpeaking = false;
+        _sessionState.setMode(DakshMode.silent);
+      });
+    }
+  }
+
+  void _toggleLiveMic() async {
+    if (_isListening) {
+      await _voiceInput.stopListening();
+      setState(() {
+        _isListening = false;
+        _sessionState.setMode(DakshMode.silent);
+        _statusMessage = "MIC OFF // STEALTH";
+      });
+    } else {
+      setState(() {
+        _isListening = true;
+        _sessionState.setMode(DakshMode.listening);
+        _statusMessage = "LISTENING (MULTILINGUAL)...";
+      });
+      await _voiceInput.startListening(
+        onResult: (text, isFinal) {
+          if (isFinal) {
+            _handleUserUtterance(text);
+          }
+        },
+      );
+    }
+  }
+
+  void _showNewCadenceModal(BuildContext context, bool isDark, Color bgCard, Color borderColor, Color accent) {
+    final titleController = TextEditingController();
+    String rhythm = 'DAILY';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: bgCard,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(8))),
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            top: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "NEW CADENCE // SCHEDULE SYNTHESIS",
+                style: TextStyle(color: accent, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: titleController,
+                autofocus: true,
+                style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 12),
+                decoration: InputDecoration(
+                  hintText: "e.g. Morning Hydration, Gym Session, Medication",
+                  hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
+                  enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: borderColor)),
+                  focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: accent)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  OutlinedButton(
+                    onPressed: () {
+                      if (titleController.text.trim().isNotEmpty) {
+                        setState(() {
+                          _cadences.add({
+                            "id": "CAD_${DateTime.now().millisecondsSinceEpoch}",
+                            "title": titleController.text.trim(),
+                            "cadence_type": rhythm,
+                            "status": "INITIALIZED // PARITY ACTIVE",
+                            "time": "08:00 AM",
+                            "isDue": true,
+                            "debt": 0,
+                          });
+                        });
+                        Navigator.pop(ctx);
+                        _deliverResponse("Cadence '${titleController.text.trim()}' committed to ledger.");
+                      }
+                    },
+                    style: OutlinedButton.styleFrom(side: BorderSide(color: accent)),
+                    child: Text("COMMIT CADENCE", style: TextStyle(color: accent, fontSize: 10)),
+                  ),
+                ],
+              )
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -209,123 +389,132 @@ class _DakshDashboardState extends State<DakshDashboard> {
             Row(
               children: [
                 Text(
-                  "D.A.K.S.H.",
+                  'D.A.K.S.H.',
                   style: TextStyle(
-                    color: textPrimary,
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.5,
+                    color: accent,
                     fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 2,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: accent, width: 0.8),
+                    color: accent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(2),
+                    border: Border.all(color: accent.withValues(alpha: 0.4)),
                   ),
                   child: Text(
-                    "OS 1.0",
-                    style: TextStyle(color: accent, fontSize: 10, fontWeight: FontWeight.bold),
+                    _sessionState.isMeetingMode ? 'STEALTH/MEETING' : 'ACTIVE_LIVE',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: accent,
+                    ),
                   ),
-                )
+                ),
               ],
             ),
             Text(
-              "DECISION & KNOWLEDGE SYNTHESIZER",
-              style: TextStyle(color: textMuted, fontSize: 8.5, letterSpacing: 1),
+              'DECISION & KNOWLEDGE SYNTHESIZER',
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 8,
+                color: textMuted,
+                letterSpacing: 0.8,
+              ),
             ),
           ],
         ),
         actions: [
           IconButton(
             icon: Icon(
-              isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-              color: textPrimary,
-              size: 20,
+              _sessionState.isMeetingMode ? Icons.volume_off : Icons.meeting_room_outlined,
+              size: 18,
+              color: _sessionState.isMeetingMode ? amberDebt : textMuted,
+            ),
+            tooltip: 'Toggle Meeting / Stealth Silence',
+            onPressed: () {
+              setState(() {
+                _sessionState.toggleMeetingMode(!_sessionState.isMeetingMode);
+              });
+            },
+          ),
+          IconButton(
+            icon: Icon(
+              isDark ? Icons.light_mode : Icons.dark_mode,
+              size: 18,
+              color: textMuted,
             ),
             onPressed: widget.onToggleTheme,
           ),
-          const SizedBox(width: 8),
         ],
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(color: borderColor, height: 1),
+          preferredSize: const Size.fromHeight(1.0),
+          child: Container(
+            color: borderColor,
+            height: 1.0,
+          ),
         ),
       ),
       body: Column(
         children: [
-          // Telemetry HUD Bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: isDark ? const Color(0xFF0D1117) : const Color(0xFFF1F5F9),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: _notifPermissionGranted ? Colors.green : Colors.amber,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _notifPermissionGranted ? "SENTINEL ACTIVE" : "PERMISSION REQUIRED",
-                      style: TextStyle(color: textPrimary, fontSize: 10, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-                Text(
-                  "DEBT TICKETS: ${_rolloverDebt.length}",
-                  style: TextStyle(color: amberDebt, fontSize: 10, fontWeight: FontWeight.bold),
-                ),
-                if (!_notifPermissionGranted)
-                  GestureDetector(
-                    onTap: () async {
-                      await DakshNativeBridge.requestNotificationAccess();
-                      await _checkPermissions();
-                    },
+          if (!_notifPermissionGranted)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: amberDebt.withValues(alpha: 0.12),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, size: 14, color: amberDebt),
+                  const SizedBox(width: 8),
+                  Expanded(
                     child: Text(
-                      "[AUTHORIZE]",
-                      style: TextStyle(color: accent, fontSize: 10, fontWeight: FontWeight.bold),
+                      "SENTINEL ACCESS NOT INITIALIZED",
+                      style: TextStyle(color: amberDebt, fontSize: 9, fontWeight: FontWeight.bold),
                     ),
                   ),
-              ],
+                  InkWell(
+                    onTap: () async {
+                      await DakshNativeBridge.requestNotificationAccess();
+                      _checkPermissions();
+                    },
+                    child: Text(
+                      "[ENABLE SENTINEL]",
+                      style: TextStyle(
+                        color: amberDebt,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
 
-          // 3-Column Execution Ledger Header (Kite Financial Tabs)
+          // 3-Column Tactical Ledger Tabs
           Container(
-            decoration: BoxDecoration(
-              color: bgCard,
-              border: Border(bottom: BorderSide(color: borderColor)),
-            ),
+            color: bgCard,
             child: Row(
               children: [
-                _buildLedgerTab(0, "01 // CADENCES", accent, textPrimary, textMuted),
-                _buildLedgerTab(1, "02 // DEBT LEDGER", accent, textPrimary, textMuted),
-                _buildLedgerTab(2, "03 // SENTINEL STREAM", accent, textPrimary, textMuted),
+                _buildLedgerTab(0, "CADENCES (${_cadences.length})", accent, textPrimary, textMuted),
+                _buildLedgerTab(1, "ROLLOVER (${_rolloverDebt.length})", amberDebt, textPrimary, textMuted),
+                _buildLedgerTab(2, "SENTINEL (${_sentinelStream.length})", accent, textPrimary, textMuted),
               ],
             ),
           ),
+          Divider(height: 1, thickness: 1, color: borderColor),
 
-          // Active Ledger Body
+          // Active Ledger Content
           Expanded(
             child: IndexedStack(
               index: _activeLedgerTab,
               children: [
-                // TAB 0: Cadences
                 _buildCadenceList(isDark, bgCard, borderColor, accent),
-
-                // TAB 1: Rollover Backlog Debt
                 _buildRolloverDebtList(isDark, bgCard, borderColor, amberDebt),
-
-                // TAB 2: Sentinel Live Stream
                 _buildSentinelStreamList(isDark, bgCard, borderColor, textMuted),
               ],
             ),
@@ -349,7 +538,7 @@ class _DakshDashboardState extends State<DakshDashboard> {
                 Expanded(
                   child: Text(
                     _statusMessage,
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: _isSpeaking ? accent : textPrimary,
@@ -373,7 +562,7 @@ class _DakshDashboardState extends State<DakshDashboard> {
             ),
           ),
 
-          // Bottom Voice Simulation Command Bar
+          // Voice & Tactical Operations Bar
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
@@ -381,22 +570,38 @@ class _DakshDashboardState extends State<DakshDashboard> {
               border: Border(top: BorderSide(color: borderColor)),
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
+                // Direct Mic Input Trigger (Sprint 7.1)
+                IconButton(
+                  onPressed: _toggleLiveMic,
+                  icon: Icon(
+                    _isListening ? Icons.mic : Icons.mic_none,
+                    color: _isListening ? Colors.redAccent : accent,
+                    size: 20,
+                  ),
+                  tooltip: "Toggle Voice Input",
+                ),
+                const SizedBox(width: 6),
                 _buildCommandButton(
-                  "\"Rename Priya to Swimi\"",
-                  () => _executeVoiceSimulation("Rename Priya to Swimi"),
+                  "\"What did I miss?\"",
+                  () => _handleUserUtterance("What did I miss? Give me my tactical briefing."),
                   accent,
                   bgCard,
                   borderColor,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 _buildCommandButton(
-                  "\"Push walk to tomorrow\"",
-                  () => _executeVoiceSimulation("Push walk to tomorrow morning"),
+                  "\"Skip Gym\"",
+                  () => _handleUserUtterance("I will skip gym workout today"),
                   amberDebt,
                   bgCard,
                   borderColor,
+                ),
+                const SizedBox(width: 6),
+                IconButton(
+                  onPressed: () => _showNewCadenceModal(context, isDark, bgCard, borderColor, accent),
+                  icon: Icon(Icons.add_circle_outline, color: accent, size: 18),
+                  tooltip: "Create Cadence",
                 ),
               ],
             ),
@@ -440,46 +645,69 @@ class _DakshDashboardState extends State<DakshDashboard> {
       padding: const EdgeInsets.all(16),
       itemCount: _cadences.length,
       itemBuilder: (context, i) {
-        final cad = _cadences[i];
-        final isDue = cad['isDue'] == true;
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: bgCard,
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: isDue ? accent.withValues(alpha: 0.5) : borderColor),
+        final item = _cadences[i];
+        final isDue = item['isDue'] == true;
+        return Dismissible(
+          key: Key(item['id']),
+          direction: DismissDirection.endToStart,
+          background: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 16),
+            color: Colors.redAccent.withValues(alpha: 0.2),
+            child: const Icon(Icons.delete, color: Colors.redAccent, size: 16),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    cad['title'],
+          onDismissed: (_) {
+            setState(() {
+              _cadences.removeAt(i);
+            });
+            _deliverResponse("Cadence '${item['title']}' removed from tracking.");
+          },
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: bgCard,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: isDue ? accent : borderColor),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item['title'],
+                      style: TextStyle(
+                        color: isDark ? Colors.white : Colors.black87,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "TYPE: ${item['cadence_type']} // ${item['time']}",
+                      style: const TextStyle(color: Colors.grey, fontSize: 8.5),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: (isDue ? accent : Colors.grey).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: Text(
+                    item['status'],
                     style: TextStyle(
-                      color: isDark ? Colors.white : Colors.black87,
-                      fontSize: 11,
+                      color: isDue ? accent : Colors.grey,
+                      fontSize: 8,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    cad['status'],
-                    style: TextStyle(
-                      color: isDue ? accent : Colors.grey,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              Text(
-                cad['time'],
-                style: TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold),
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         );
       },
