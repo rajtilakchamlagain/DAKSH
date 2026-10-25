@@ -1,15 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- D.A.K.S.H. Sovereign Mobile Authority Permissions -->
+    <!-- Standard User-Facing Permissions (Play Protect compliant) -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:label="DAKSH"
@@ -34,7 +31,7 @@
             </intent-filter>
         </activity>
 
-        <!-- D.A.K.S.H. Ambient Notification Sentinel Service -->
+        <!-- Notification Sentinel Service (Activated only when user toggles in Settings) -->
         <service
             android:name=".DakshNotificationService"
             android:label="DAKSH Sentinel"
